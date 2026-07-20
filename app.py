@@ -1,5 +1,6 @@
 import os
 import secrets
+import sqlite3
 from datetime import timedelta
 
 from flask import Flask, render_template, request, redirect, session, abort
@@ -76,6 +77,36 @@ class SecurityWSGIMiddleware:
 app.wsgi_app = SecurityWSGIMiddleware(app.wsgi_app)
 
 
+# ============ Database Initialization ============
+
+def init_db():
+    """Initialize SQLite database with users table."""
+    os.makedirs("data", exist_ok=True)
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            email TEXT,
+            phone TEXT
+        )
+    """)
+    # Insert default users with INSERT OR IGNORE to prevent duplicates
+    default_users = [
+        ("admin", generate_password_hash("admin123"), "admin@example.com", "13800138000"),
+        ("alice", generate_password_hash("alice2025"), "alice@example.com", "13900139001"),
+    ]
+    c.executemany(
+        "INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+        default_users,
+    )
+    conn.commit()
+    conn.close()
+    print("[DB] Database initialized: data/users.db")
+
+
 # ============ User Data ============
 
 USERS = {
@@ -100,12 +131,37 @@ USERS = {
 
 # ============ Routes ============
 
+def get_user_from_db(username):
+    """Look up user by username from SQLite database."""
+    try:
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        c.execute("SELECT username, password, email, phone FROM users WHERE username = ?", (username,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {
+                "username": row[0],
+                "password": row[1],
+                "email": row[2],
+                "phone": row[3],
+                "role": "user",
+                "balance": 0
+            }
+    except Exception:
+        pass
+    return None
+
+
 @app.route("/")
 def index():
     username = session.get("username")
     user_info = None
-    if username and username in USERS:
-        user_info = USERS[username]
+    if username:
+        if username in USERS:
+            user_info = USERS[username]
+        else:
+            user_info = get_user_from_db(username)
     return render_template("index.html", user=user_info)
 
 
@@ -122,16 +178,25 @@ def login():
             error = "用户名和密码不能为空"
         elif len(username) > 64 or len(password) > 256:
             error = "输入内容过长"
-        elif username in USERS and check_password_hash(USERS[username]["password"], password):
-            session["username"] = username
-            session.permanent = True
-            user_info = USERS[username]
-            return render_template("index.html", user=user_info)
         else:
-            error = "用户名或密码错误"
+            # Try hardcoded USERS dict first
+            if username in USERS and check_password_hash(USERS[username]["password"], password):
+                session["username"] = username
+                session.permanent = True
+                user_info = USERS[username]
+                return render_template("index.html", user=user_info)
+            # Then try SQLite database (for newly registered users)
+            db_user = get_user_from_db(username)
+            if db_user and check_password_hash(db_user["password"], password):
+                session["username"] = username
+                session.permanent = True
+                return render_template("index.html", user=db_user)
+            else:
+                error = "用户名或密码错误"
 
     csrf_token = generate_csrf()
-    return render_template("login.html", error=error, csrf_token=csrf_token)
+    msg = request.args.get("msg", "")
+    return render_template("login.html", error=error, msg=msg, csrf_token=csrf_token)
 
 
 @app.route("/logout")
@@ -156,7 +221,90 @@ def health():
     return {"status": "ok"}, 200
 
 
+# ============ Register ============
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    error = None
+    success = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        email = request.form.get("email", "").strip()
+        phone = request.form.get("phone", "").strip()
+
+        # Input validation
+        if not username or not password:
+            error = "用户名和密码不能为空"
+        elif len(username) > 64 or len(password) > 256:
+            error = "输入内容过长"
+        elif not email:
+            error = "邮箱不能为空"
+        else:
+            # Hash password with bcrypt
+            hashed_pw = generate_password_hash(password)
+
+            # ✅ FIXED: Use parameterized query to prevent SQL injection
+            conn = sqlite3.connect("data/users.db")
+            c = conn.cursor()
+            sql = "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)"
+            print(f"[SQL] {sql} | params: username={username!r}")
+            try:
+                c.execute(sql, (username, hashed_pw, email, phone))
+                conn.commit()
+                success = "注册成功，请登录"
+            except sqlite3.IntegrityError:
+                error = "注册失败：用户名已存在"
+            except Exception:
+                error = "注册失败，请稍后重试"
+            finally:
+                conn.close()
+
+        if success:
+            return redirect(f"/login?msg={success}")
+
+    csrf_token = generate_csrf()
+    return render_template("register.html", error=error, csrf_token=csrf_token)
+
+
+# ============ Search ============
+
+@app.route("/search")
+def search():
+    keyword = request.args.get("keyword", "").strip()
+    results = []
+
+    if keyword:
+        if len(keyword) > 128:
+            keyword = keyword[:128]
+        # ✅ FIXED: Use parameterized query to prevent SQL injection
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        sql = "SELECT id, username, email, phone FROM users WHERE username LIKE ? OR email LIKE ?"
+        like_pattern = f"%{keyword}%"
+        print(f"[SQL] {sql} | params: keyword={keyword!r}")
+        try:
+            c.execute(sql, (like_pattern, like_pattern))
+            rows = c.fetchall()
+            for row in rows:
+                results.append({"id": row[0], "username": row[1], "email": row[2], "phone": row[3]})
+        except Exception as e:
+            print(f"[SQL] Error: {e}")
+        finally:
+            conn.close()
+
+    username = session.get("username")
+    user_info = None
+    if username:
+        if username in USERS:
+            user_info = USERS[username]
+        else:
+            user_info = get_user_from_db(username)
+    return render_template("index.html", user=user_info, search_results=results, keyword=keyword)
+
+
 # ============ Main Entry ============
 
 if __name__ == "__main__":
+    init_db()
     app.run(debug=False, host="0.0.0.0", port=5000)

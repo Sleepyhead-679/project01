@@ -135,6 +135,16 @@ body {
     border: 1px solid #f5c6cb;
 }
 
+.success-msg {
+    background: #f0fff4;
+    color: #1b7a34;
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    font-size: 14px;
+    border: 1px solid #b7e4c7;
+}
+
 .user-info ul {
     list-style: none;
     padding: 0;
@@ -155,4 +165,71 @@ body {
     color: #555;
     display: inline-block;
     width: 80px;
+}
+
+.search-section {
+    margin-bottom: 24px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.search-form {
+    display: flex;
+    gap: 10px;
+}
+
+.search-form input[type="text"] {
+    flex: 1;
+    padding: 10px 14px;
+    border: 1px solid #d0d5dd;
+    border-radius: 6px;
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.search-form input[type="text"]:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102,126,234,0.15);
+}
+
+.search-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+}
+
+.search-table thead tr {
+    background: #f8f9fa;
+    text-align: left;
+}
+
+.search-table th {
+    padding: 10px 14px;
+    border-bottom: 2px solid #e9ecef;
+    font-size: 14px;
+    color: #555;
+}
+
+.search-table td {
+    padding: 10px 14px;
+    font-size: 14px;
+}
+
+.search-table tbody tr {
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.search-table tbody tr:hover {
+    background: #f8f9ff;
+}
+
+.no-result {
+    background: #fff8e1;
+    color: #8d6e00;
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    font-size: 14px;
+    border: 1px solid #ffe082;
 }

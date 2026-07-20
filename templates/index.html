@@ -3,6 +3,45 @@
 <div class="card">
     {% if user %}
         <h2>欢迎回来，{{ user.username }}！</h2>
+
+        <!-- 搜索功能 -->
+        <div class="search-section">
+            <form method="get" action="/search" class="search-form">
+                <input type="text" name="keyword" placeholder="搜索用户名或邮箱..." value="{{ keyword or '' }}">
+                <button type="submit" class="btn">搜索</button>
+            </form>
+        </div>
+
+        {% if search_results is defined %}
+            <h3 style="margin-bottom: 16px; font-size: 18px; color: #333;">
+                搜索结果{% if keyword %}："{{ keyword }}"{% endif %}
+            </h3>
+            {% if search_results %}
+                <table class="search-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>用户名</th>
+                            <th>邮箱</th>
+                            <th>手机</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in search_results %}
+                        <tr>
+                            <td>{{ r.id }}</td>
+                            <td>{{ r.username }}</td>
+                            <td>{{ r.email }}</td>
+                            <td>{{ r.phone }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="no-result">无搜索结果</div>
+            {% endif %}
+        {% endif %}
+
         <div class="user-info">
             <ul>
                 <li><span class="label">用户名：</span>{{ user.username }}</li>
