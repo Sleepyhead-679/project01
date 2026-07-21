@@ -233,3 +233,65 @@ body {
     font-size: 14px;
     border: 1px solid #ffe082;
 }
+
+/* File input for upload */
+.file-input {
+    width: 100%;
+    padding: 8px 0;
+    font-size: 14px;
+    color: #555;
+}
+
+.file-input::file-selector-button {
+    background: #667eea;
+    color: #fff;
+    border: none;
+    padding: 8px 18px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    margin-right: 12px;
+    transition: background 0.2s;
+}
+
+.file-input::file-selector-button:hover {
+    background: #5a6fd6;
+}
+
+/* Upload preview image */
+.upload-preview img {
+    max-width: 200px;
+    max-height: 200px;
+    border-radius: 50%;
+    border: 3px solid #667eea;
+    object-fit: cover;
+}
+
+/* Action buttons bar */
+.action-bar {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+/* Navigation avatar */
+.nav-avatar-link {
+    display: flex;
+    align-items: center;
+    text-decoration: none;
+}
+
+.nav-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.8);
+    object-fit: cover;
+    cursor: pointer;
+    transition: border-color 0.2s, transform 0.2s;
+}
+
+.nav-avatar:hover {
+    border-color: #fff;
+    transform: scale(1.1);
+}

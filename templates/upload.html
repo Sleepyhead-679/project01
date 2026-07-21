@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card login-card">
+    <h2>上传头像</h2>
+
+    {% if error %}
+        <div class="error-msg">{{ error }}</div>
+    {% endif %}
+
+    {% if success and file_url %}
+        <div class="success-msg">{{ success }}</div>
+        <div class="upload-preview" style="text-align: center; margin-bottom: 20px;">
+            <p style="margin-bottom: 12px; color: #666;">新头像预览：</p>
+            <img src="{{ file_url }}" alt="头像预览">
+            <p style="margin-top: 12px;">
+                <a href="{{ file_url }}" target="_blank" style="color: #667eea;">{{ file_url }}</a>
+            </p>
+        </div>
+    {% endif %}
+
+    {% if current_avatar and not success %}
+        <div class="upload-preview" style="text-align: center; margin-bottom: 20px;">
+            <p style="margin-bottom: 12px; color: #666;">当前头像：</p>
+            <img src="{{ current_avatar }}" alt="当前头像">
+            <p style="margin-top: 12px; color: #999;">选择新文件可替换当前头像</p>
+        </div>
+    {% endif %}
+
+    <form method="post" action="/upload" enctype="multipart/form-data" class="login-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="form-group">
+            <label for="file">选择头像文件</label>
+            <input type="file" id="file" name="file" class="file-input">
+        </div>
+        <button type="submit" class="btn">上传</button>
+    </form>
+    <p style="margin-top: 20px; text-align: center; color: #666;">
+        <a href="/" style="color: #667eea;">返回首页</a>
+    </p>
+</div>
+{% endblock %}

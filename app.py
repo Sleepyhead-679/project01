@@ -3,7 +3,7 @@ import secrets
 import sqlite3
 from datetime import timedelta
 
-from flask import Flask, render_template, request, redirect, session, abort
+from flask import Flask, render_template, request, redirect, session, abort, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -15,6 +15,13 @@ app = Flask(__name__)
 
 # Secret key — read from env var, fallback to random (session will reset on restart)
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+
+# Max upload size: 16MB
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+
+# Upload folder
+UPLOAD_FOLDER = os.path.join(app.static_folder, "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Session security settings
 app.config.update(
@@ -90,9 +97,15 @@ def init_db():
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             email TEXT,
-            phone TEXT
+            phone TEXT,
+            avatar TEXT DEFAULT NULL
         )
     """)
+    # Add avatar column if missing (for existing databases)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     # Insert default users with INSERT OR IGNORE to prevent duplicates
     default_users = [
         ("admin", generate_password_hash("admin123"), "admin@example.com", "13800138000"),
@@ -116,7 +129,8 @@ USERS = {
         "role": "admin",
         "email": "admin@example.com",
         "phone": "13800138000",
-        "balance": 99999
+        "balance": 99999,
+        "avatar": None
     },
     "alice": {
         "username": "alice",
@@ -124,7 +138,8 @@ USERS = {
         "role": "user",
         "email": "alice@example.com",
         "phone": "13900139001",
-        "balance": 100
+        "balance": 100,
+        "avatar": None
     }
 }
 
@@ -136,7 +151,7 @@ def get_user_from_db(username):
     try:
         conn = sqlite3.connect("data/users.db")
         c = conn.cursor()
-        c.execute("SELECT username, password, email, phone FROM users WHERE username = ?", (username,))
+        c.execute("SELECT username, password, email, phone, avatar FROM users WHERE username = ?", (username,))
         row = c.fetchone()
         conn.close()
         if row:
@@ -145,12 +160,31 @@ def get_user_from_db(username):
                 "password": row[1],
                 "email": row[2],
                 "phone": row[3],
+                "avatar": row[4],
                 "role": "user",
                 "balance": 0
             }
     except Exception:
         pass
     return None
+
+
+def get_avatar_url(username):
+    """Get avatar URL for a user — check USERS dict first, then DB."""
+    if username in USERS and USERS[username].get("avatar"):
+        return f"/static/uploads/{USERS[username]['avatar']}"
+    db_user = get_user_from_db(username)
+    if db_user and db_user.get("avatar"):
+        return f"/static/uploads/{db_user['avatar']}"
+    return None
+
+
+@app.context_processor
+def inject_avatar():
+    """Make session_avatar available in all templates."""
+    username = session.get("username")
+    avatar_url = get_avatar_url(username) if username else None
+    return dict(session_avatar=avatar_url)
 
 
 @app.route("/")
@@ -301,6 +335,155 @@ def search():
         else:
             user_info = get_user_from_db(username)
     return render_template("index.html", user=user_info, search_results=results, keyword=keyword)
+
+
+# ============ Upload Avatar ============
+
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+ALLOWED_MIMETYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
+
+# Magic bytes signatures for image validation
+IMAGE_SIGNATURES = {
+    b"\x89PNG\r\n\x1a\n": "image/png",
+    b"\xff\xd8\xff": "image/jpeg",
+    b"GIF87a": "image/gif",
+    b"GIF89a": "image/gif",
+    b"RIFF": "image/webp",   # WEBP: RIFF....WEBP
+    b"BM": "image/bmp",
+}
+
+DANGEROUS_EXTENSIONS = {"php", "phtml", "php3", "php4", "php5", "php7", "pht", "phps", "asp", "aspx", "jsp", "jspx", "exe", "sh", "py", "pl", "cgi", "htaccess", "htpasswd"}
+
+
+def allowed_file(filename):
+    """Check if file has an allowed image extension (whitelist approach)."""
+    if "." not in filename:
+        return False
+    # Ensure the last extension is a valid image extension
+    ext = filename.rsplit(".", 1)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return False
+    # Block hidden files and files starting with dot
+    if filename.startswith("."):
+        return False
+    # Block known dangerous extensions anywhere in the filename
+    parts = filename.lower().split(".")
+    for part in parts:
+        if part in DANGEROUS_EXTENSIONS:
+            return False
+    return True
+
+
+def validate_image_content(file_storage):
+    """Validate file content by checking magic bytes (signature-based)."""
+    header = file_storage.read(16)
+    file_storage.seek(0)  # Reset file pointer for later save
+
+    for signature, img_type in IMAGE_SIGNATURES.items():
+        if header.startswith(signature):
+            # For WEBP, need deeper check
+            if signature == b"RIFF":
+                if header[8:12] != b"WEBP":
+                    return False
+            return True
+
+    return False
+
+
+def secure_filename_original(name):
+    """Strip path traversal characters from filename while keeping original name."""
+    # Remove any directory separators to prevent path traversal
+    name = name.replace("\\", "/")
+    # Keep only the last component (filename)
+    name = name.rsplit("/", 1)[-1] if "/" in name else name
+    # Remove any null bytes
+    name = name.replace("\x00", "")
+    return name
+
+
+@app.route("/upload", methods=["GET", "POST"])
+def upload():
+    """Handle avatar upload with image validation."""
+    username = session.get("username")
+    if not username:
+        return redirect("/login")
+
+    error = None
+    success = None
+    file_url = None
+
+    if request.method == "POST":
+        if "file" not in request.files:
+            error = "没有选择文件"
+        else:
+            f = request.files["file"]
+            if f.filename == "":
+                error = "没有选择文件"
+            else:
+                filename = secure_filename_original(f.filename)
+
+                # V-U01, V-U06, V-U09, V-U10: Validate extension
+                if not allowed_file(filename):
+                    error = "不支持的文件类型，仅允许上传图片文件（PNG/JPG/GIF/WEBP/BMP）"
+                else:
+                    # V-U08: Validate Content-Type MIME
+                    content_type = f.content_type or ""
+                    # Only reject if content type is explicitly set to a non-image type
+                    if content_type and content_type not in ALLOWED_MIMETYPES:
+                        error = "文件类型不匹配，请上传有效的图片文件"
+                    else:
+                        # V-U01, V-U08: Validate file content via magic bytes
+                        if not validate_image_content(f):
+                            error = "文件内容校验失败，请上传有效的图片文件"
+                        else:
+                            save_path = os.path.join(UPLOAD_FOLDER, filename)
+
+                            # V-U07: Protect against file overwriting
+                            if os.path.exists(save_path):
+                                error = "文件已存在，请修改文件名后重试"
+                            else:
+                                # Check file is within uploads directory (path traversal protection)
+                                real_path = os.path.realpath(save_path)
+                                if not real_path.startswith(os.path.realpath(UPLOAD_FOLDER)):
+                                    error = "非法的文件路径"
+                                else:
+                                    f.save(save_path)
+                                    file_url = f"/static/uploads/{filename}"
+
+                                    # Store avatar reference in USERS dict
+                                    if username in USERS:
+                                        USERS[username]["avatar"] = filename
+                                    else:
+                                        conn = sqlite3.connect("data/users.db")
+                                        c = conn.cursor()
+                                        c.execute("UPDATE users SET avatar = ? WHERE username = ?", (filename, username))
+                                        conn.commit()
+                                        conn.close()
+
+                                    success = "头像上传成功"
+
+    current_avatar = get_avatar_url(username)
+
+    csrf_token = generate_csrf()
+    return render_template(
+        "upload.html",
+        error=error,
+        success=success,
+        file_url=file_url,
+        current_avatar=current_avatar,
+        csrf_token=csrf_token,
+    )
+
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    """Handle file too large error."""
+    csrf_token = generate_csrf()
+    return render_template(
+        "upload.html",
+        error="文件过大，最大允许 16MB",
+        csrf_token=csrf_token,
+    ), 413
 
 
 # ============ Main Entry ============
