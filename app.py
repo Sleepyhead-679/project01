@@ -98,14 +98,16 @@ def init_db():
             password TEXT NOT NULL,
             email TEXT,
             phone TEXT,
-            avatar TEXT DEFAULT NULL
+            avatar TEXT DEFAULT NULL,
+            balance REAL DEFAULT 0
         )
     """)
-    # Add avatar column if missing (for existing databases)
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT NULL")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
+    # Add columns if missing (for existing databases)
+    for col in ["avatar", "balance"]:
+        try:
+            c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT NULL" if col == "avatar" else f"ALTER TABLE users ADD COLUMN {col} REAL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
     # Insert default users with INSERT OR IGNORE to prevent duplicates
     default_users = [
         ("admin", generate_password_hash("admin123"), "admin@example.com", "13800138000"),
@@ -151,7 +153,7 @@ def get_user_from_db(username):
     try:
         conn = sqlite3.connect("data/users.db")
         c = conn.cursor()
-        c.execute("SELECT username, password, email, phone, avatar FROM users WHERE username = ?", (username,))
+        c.execute("SELECT username, password, email, phone, avatar, balance FROM users WHERE username = ?", (username,))
         row = c.fetchone()
         conn.close()
         if row:
@@ -161,30 +163,59 @@ def get_user_from_db(username):
                 "email": row[2],
                 "phone": row[3],
                 "avatar": row[4],
+                "balance": row[5] or 0,
                 "role": "user",
-                "balance": 0
             }
     except Exception:
         pass
     return None
 
 
+def get_db_id(username):
+    """Get user id from database by username."""
+    try:
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        c.execute("SELECT id FROM users WHERE username = ?", (username,))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def get_balance_from_db(username):
+    """Get user balance from database."""
+    try:
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        c.execute("SELECT balance FROM users WHERE username = ?", (username,))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
 def get_avatar_url(username):
-    """Get avatar URL for a user — check USERS dict first, then DB."""
-    if username in USERS and USERS[username].get("avatar"):
-        return f"/static/uploads/{USERS[username]['avatar']}"
+    """Get avatar URL for a user — check DB first, fallback to USERS dict."""
+    # Check DB first (persistent)
     db_user = get_user_from_db(username)
     if db_user and db_user.get("avatar"):
         return f"/static/uploads/{db_user['avatar']}"
+    # Fallback to USERS dict
+    if username in USERS and USERS[username].get("avatar"):
+        return f"/static/uploads/{USERS[username]['avatar']}"
     return None
 
 
 @app.context_processor
-def inject_avatar():
-    """Make session_avatar available in all templates."""
+def inject_globals():
+    """Make session_avatar and current_user_id available in all templates."""
     username = session.get("username")
     avatar_url = get_avatar_url(username) if username else None
-    return dict(session_avatar=avatar_url)
+    user_id = session.get("user_id", 1)
+    return dict(session_avatar=avatar_url, current_user_id=user_id)
 
 
 @app.route("/")
@@ -194,6 +225,10 @@ def index():
     if username:
         if username in USERS:
             user_info = USERS[username]
+            # Override balance from DB for consistency
+            db_balance = get_balance_from_db(username)
+            if db_balance is not None:
+                user_info["balance"] = db_balance
         else:
             user_info = get_user_from_db(username)
     return render_template("index.html", user=user_info)
@@ -216,6 +251,7 @@ def login():
             # Try hardcoded USERS dict first
             if username in USERS and check_password_hash(USERS[username]["password"], password):
                 session["username"] = username
+                session["user_id"] = get_db_id(username) or 1
                 session.permanent = True
                 user_info = USERS[username]
                 return render_template("index.html", user=user_info)
@@ -223,6 +259,7 @@ def login():
             db_user = get_user_from_db(username)
             if db_user and check_password_hash(db_user["password"], password):
                 session["username"] = username
+                session["user_id"] = get_db_id(username) or 1
                 session.permanent = True
                 return render_template("index.html", user=db_user)
             else:
@@ -335,6 +372,90 @@ def search():
         else:
             user_info = get_user_from_db(username)
     return render_template("index.html", user=user_info, search_results=results, keyword=keyword)
+
+
+# ============ Profile ============
+
+def get_user_by_id(user_id):
+    """Look up user by ID from database."""
+    try:
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        sql = "SELECT id, username, email, phone, balance FROM users WHERE id = ?"
+        c.execute(sql, (user_id,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {
+                "id": row[0],
+                "username": row[1],
+                "email": row[2],
+                "phone": row[3],
+                "balance": row[4]
+            }
+    except Exception as e:
+        print(f"[SQL] Profile query error: {e}")
+    return None
+
+
+@app.route("/profile")
+def profile():
+    """Display current user's profile — requires login, uses session user_id."""
+    username = session.get("username")
+    if not username:
+        return redirect("/login")
+
+    user_id = session.get("user_id")
+    user_info = get_user_by_id(user_id) if user_id else None
+
+    csrf_token = generate_csrf()
+    return render_template("profile.html", user=user_info, csrf_token=csrf_token)
+
+
+# ============ Recharge ============
+
+@app.route("/recharge", methods=["POST"])
+def recharge():
+    """Add positive amount to current user's balance — requires login."""
+    username = session.get("username")
+    if not username:
+        return redirect("/login")
+
+    user_id = session.get("user_id")
+    amount_str = request.form.get("amount", "0")
+
+    error = None
+    if not user_id:
+        error = "用户信息错误"
+    else:
+        try:
+            amount = float(amount_str)
+            if amount <= 0:
+                error = "充值金额必须为正数"
+            elif amount > 100000:
+                error = "单次充值金额不能超过 100,000 元"
+            else:
+                conn = sqlite3.connect("data/users.db")
+                c = conn.cursor()
+                sql = "UPDATE users SET balance = balance + ? WHERE id = ?"
+                print(f"[SQL] {sql} | params: amount={amount}, user_id={user_id}")
+                c.execute(sql, (amount, user_id))
+                conn.commit()
+                conn.close()
+
+                # Sync USERS dict balance if applicable
+                if username in USERS:
+                    USERS[username]["balance"] = USERS[username].get("balance", 0) + amount
+
+        except (ValueError, TypeError):
+            error = "充值金额格式错误"
+
+    if error:
+        csrf_token = generate_csrf()
+        user_info = get_user_by_id(user_id) if user_id else None
+        return render_template("profile.html", user=user_info, error=error, csrf_token=csrf_token)
+
+    return redirect(f"/profile")
 
 
 # ============ Upload Avatar ============
@@ -450,15 +571,15 @@ def upload():
                                     f.save(save_path)
                                     file_url = f"/static/uploads/{filename}"
 
-                                    # Store avatar reference in USERS dict
+                                    # Store avatar reference in USERS dict and DB
                                     if username in USERS:
                                         USERS[username]["avatar"] = filename
-                                    else:
-                                        conn = sqlite3.connect("data/users.db")
-                                        c = conn.cursor()
-                                        c.execute("UPDATE users SET avatar = ? WHERE username = ?", (filename, username))
-                                        conn.commit()
-                                        conn.close()
+                                    # Always persist to DB
+                                    conn = sqlite3.connect("data/users.db")
+                                    c = conn.cursor()
+                                    c.execute("UPDATE users SET avatar = ? WHERE username = ?", (filename, username))
+                                    conn.commit()
+                                    conn.close()
 
                                     success = "头像上传成功"
 
