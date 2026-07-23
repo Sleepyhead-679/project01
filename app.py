@@ -609,29 +609,44 @@ def request_entity_too_large(error):
 
 # ============ Dynamic Pages ============
 
+# Whitelist of allowed page names
+ALLOWED_PAGES = {"help", "help.html", "about", "about.html", "faq", "faq.html"}
+
+# Pages directory (absolute path for boundary checking)
+PAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pages")
+
+
 @app.route("/page")
 def dynamic_page():
-    """Load a dynamic page by name from the pages/ directory."""
+    """Load a dynamic page by name from the pages/ directory with path traversal protection."""
     name = request.args.get("name", "")
     page_content = None
 
     if name:
-        # 🚨 INTENTIONAL PATH TRAVERSAL VULNERABILITY: direct string concatenation
-        page_path = os.path.join("pages", name)
-        print(f"[PAGE] Trying path: {page_path}")
+        # Layer 1: Strip path separators to prevent basic traversal
+        safe_name = name.replace("/", "").replace("\\", "").replace("..", "")
 
-        if os.path.exists(page_path):
-            with open(page_path, "r", encoding="utf-8") as f:
-                page_content = f.read()
+        # Layer 2: Check whitelist
+        if name not in ALLOWED_PAGES:
+            page_content = "页面不存在"
         else:
-            # Try with .html extension
-            page_path_html = page_path + ".html"
-            print(f"[PAGE] Trying path with .html: {page_path_html}")
-            if os.path.exists(page_path_html):
-                with open(page_path_html, "r", encoding="utf-8") as f:
+            page_path = os.path.join(PAGES_DIR, safe_name)
+
+            # Layer 3: Verify resolved path is within pages/ directory
+            real_path = os.path.realpath(page_path)
+            if not real_path.startswith(os.path.realpath(PAGES_DIR)):
+                page_content = "页面不存在"
+            elif os.path.exists(real_path):
+                with open(real_path, "r", encoding="utf-8") as f:
                     page_content = f.read()
             else:
-                page_content = "页面不存在"
+                # Try with .html extension
+                page_path_html = real_path + ".html"
+                if os.path.exists(page_path_html):
+                    with open(page_path_html, "r", encoding="utf-8") as f:
+                        page_content = f.read()
+                else:
+                    page_content = "页面不存在"
 
     username = session.get("username")
     user_info = None
