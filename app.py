@@ -607,6 +607,45 @@ def request_entity_too_large(error):
     ), 413
 
 
+# ============ Dynamic Pages ============
+
+@app.route("/page")
+def dynamic_page():
+    """Load a dynamic page by name from the pages/ directory."""
+    name = request.args.get("name", "")
+    page_content = None
+
+    if name:
+        # 🚨 INTENTIONAL PATH TRAVERSAL VULNERABILITY: direct string concatenation
+        page_path = os.path.join("pages", name)
+        print(f"[PAGE] Trying path: {page_path}")
+
+        if os.path.exists(page_path):
+            with open(page_path, "r", encoding="utf-8") as f:
+                page_content = f.read()
+        else:
+            # Try with .html extension
+            page_path_html = page_path + ".html"
+            print(f"[PAGE] Trying path with .html: {page_path_html}")
+            if os.path.exists(page_path_html):
+                with open(page_path_html, "r", encoding="utf-8") as f:
+                    page_content = f.read()
+            else:
+                page_content = "页面不存在"
+
+    username = session.get("username")
+    user_info = None
+    if username:
+        if username in USERS:
+            user_info = USERS[username]
+            db_balance = get_balance_from_db(username)
+            if db_balance is not None:
+                user_info["balance"] = db_balance
+        else:
+            user_info = get_user_from_db(username)
+    return render_template("index.html", user=user_info, page_content=page_content)
+
+
 # ============ Main Entry ============
 
 if __name__ == "__main__":

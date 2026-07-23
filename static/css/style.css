@@ -272,6 +272,15 @@ body {
     display: flex;
     gap: 10px;
     margin-top: 20px;
+    flex-wrap: wrap;
+}
+
+/* Page content area (dynamic pages) */
+.page-content {
+    background: #fff;
+    border-radius: 8px;
+    line-height: 1.8;
+    color: #333;
 }
 
 /* Navigation avatar */
