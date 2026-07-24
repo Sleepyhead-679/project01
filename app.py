@@ -2,6 +2,7 @@ import os
 import secrets
 import sqlite3
 from datetime import timedelta
+from urllib.parse import urlparse
 
 from flask import Flask, render_template, request, redirect, session, abort, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -27,7 +28,8 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=False,         # Set to True if using HTTPS in production
+    # In production with HTTPS, set ENV=production to enable secure cookies
+    SESSION_COOKIE_SECURE=os.environ.get("ENV") == "production",
     PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
     SESSION_PERMANENT=True,
     SESSION_REFRESH_EACH_REQUEST=True,
@@ -463,23 +465,57 @@ def recharge():
 @app.route("/change-password", methods=["POST"])
 @limiter.limit("10 per minute")
 def change_password():
-    """Change password — session required, CSRF protected, but no old-password/auth check."""
+    """Change password with full security checks."""
     if not session.get("username"):
         return redirect("/login")
 
+    current_user = session["username"]
     username = request.form.get("username", "")
+    old_password = request.form.get("old_password", "")
     new_password = request.form.get("new_password", "")
 
-    if not username or not new_password:
+    # 修复漏洞3: Referer校验 — 必须来自本站
+    referer = request.headers.get("Referer", "")
+    if not referer:
         return redirect("/profile")
+    from urllib.parse import urlparse
+    referer_host = urlparse(referer).hostname
+    request_host = request.host.split(":")[0]
+    if referer_host != request_host and referer_host != "192.168.137.129":
+        return redirect("/profile")
+
+    if not username or not new_password or not old_password:
+        return redirect("/profile")
+
+    # 修复漏洞5: 只能修改自己的密码
+    if username != current_user:
+        return redirect("/profile")
+
+    # 修复漏洞2: 验证原密码
+    password_valid = False
+
+    # Check USERS dict first
+    if username in USERS and check_password_hash(USERS[username]["password"], old_password):
+        password_valid = True
+    else:
+        # Check database
+        db_user = get_user_from_db(username)
+        if db_user and check_password_hash(db_user["password"], old_password):
+            password_valid = True
+
+    if not password_valid:
+        # Return error to profile page
+        csrf_token = generate_csrf()
+        user_info = get_user_by_id(session.get("user_id")) if session.get("user_id") else None
+        return render_template("profile.html", user=user_info, error="原密码错误", csrf_token=csrf_token)
 
     hashed_pw = generate_password_hash(new_password)
 
-    # Try updating in USERS dict first
+    # Update USERS dict
     if username in USERS:
         USERS[username]["password"] = hashed_pw
     else:
-        # Update in database for registered users
+        # Update database
         try:
             conn = sqlite3.connect("data/users.db")
             c = conn.cursor()

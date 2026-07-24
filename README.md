@@ -111,16 +111,22 @@ python app.py
 - 页面内容从 `pages/` 目录加载
 - 仅允许加载白名单中的页面
 
+### 修改密码
+- 在个人中心页面可修改密码
+- 需要输入原密码验证身份
+- 仅限修改自己的密码
+- 需要 CSRF Token 与 Referer 双重校验
+
 ## 安全措施（已启用）
 
 | 类别 | 措施 | 说明 |
 |------|------|------|
 | 🛡️ **SQL 注入防护** | 参数化查询 | 所有数据库操作使用 `?` 占位符 |
 | 🔐 **密码安全** | scrypt 哈希 | 使用 `werkzeug.security` 哈希存储 |
-| 🚫 **CSRF 保护** | Flask-WTF CSRFProtect | 全局保护 POST 请求 |
+| 🚫 **CSRF 保护** | Flask-WTF CSRFProtect 全局保护 | 所有 POST 端点防跨站 |
 | ⏱️ **速率限制** | Flask-Limiter | 登录 10 次/分钟/IP |
 | 📋 **安全响应头** | CSP/X-Frame-Options 等 | XSS 与点击劫持防护 |
-| 🔒 **会话安全** | HttpOnly + SameSite + 8h | 防 Session 劫持 |
+| 🔒 **会话安全** | HttpOnly + SameSite + 8h + Secure(生产环境) | 防 Session 劫持 |
 | 🕵️ **版本隐藏** | WSGI 中间件 | 隐藏 Server 版本信息 |
 | ✂️ **输入过滤** | 长度校验 + strip() + 自动转义 | 防 XSS 与超长输入 |
 | 📝 **错误保护** | 通用错误提示 | 不泄露 SQL 结构 |
@@ -129,7 +135,7 @@ python app.py
 | 🔐 **权限校验** | user_id 从 session 获取，拒绝 URL/表单参数 | 防水平越权 |
 | 💰 **充值安全** | 正数校验 + 上限 100,000 + 参数化查询 | 防负金额/超额/SQL注入 |
 | 📄 **文件包含防护** | 白名单校验 + 路径分隔符剥离 + `os.path.realpath()` 边界检查 | 防任意文件读取 |
-| 🛡️ **CSRF 防护** | Flask-WTF CSRFProtect 全局保护 + SameSite=Lax | 防跨站请求伪造 |
+| 🔐 **密码修改安全** | 原密码校验 + Referer 校验 + CSRF Token + Session 绑定 | 防越权改密 |
 
 ### 文件上传安全策略（5层防御）
 

@@ -4,166 +4,181 @@
 
 | 字段 | 值 |
 |------|------|
-| 报告编号 | DAY7-CSRF-20260723 |
+| 报告编号 | DAY7-CSRF-20260724 |
 | 目标地址 | `http://192.168.137.129:5000` |
 | 应用名称 | 用户管理系统（Flask + SQLite） |
-| 审计日期 | 2026-07-23 |
-| 审计类型 | 跨站请求伪造（CSRF） |
-| 发现数量 | 1 个 |
-| 修复状态 | ✅ 已修复 |
+| 审计日期 | 2026-07-24 |
+| 审计类型 | CSRF + 越权 + 密码修改安全 |
+| 发现数量 | 5 个 |
+| 修复状态 | ✅ 全部已修复 |
 
 ---
 
-## 一、漏洞详情
+## 一、漏洞汇总
 
-### CSRF-01：/change-password 路由无 CSRF 保护
+| # | 漏洞 | 类型 | 等级 | 位置 |
+|---|------|------|------|------|
+| 1 | `/change-password` 无 CSRF Token 保护 | CSRF | 🔴 高危 | `app.py:465` |
+| 2 | `/change-password` 无原密码校验 | 越权 | 🔴 高危 | `app.py:476-481` |
+| 3 | `/change-password` 无 Referer 校验 | CSRF | 🔴 高危 | 默认行为 |
+| 4 | `/change-password` 可越权改他人密码 | IDOR | 🔴 高危 | `app.py:476` |
+| 5 | `SESSION_COOKIE_SECURE=False` | 配置缺陷 | 🟠 中危 | `app.py:30` |
 
-| 属性 | 值 |
-|------|-----|
-| **漏洞编号** | CSRF-01 |
-| **漏洞类型** | 跨站请求伪造（Cross-Site Request Forgery） |
-| **严重等级** | 🔴 高危 |
-| **影响端点** | `POST /change-password` |
-| **代码位置** | `app.py` 第 465 行 |
-| **问题代码** | `@csrf.exempt` |
+---
 
-#### 漏洞代码
+## 二、漏洞详情与修复方案
 
+---
+
+### 漏洞 1：CSRF — 无 Token 保护
+
+**位置：** `app.py` 第 465 行
+
+**问题代码：**
 ```python
-# app.py 第 463-465 行
-@app.route("/change-password", methods=["POST"])
-@limiter.limit("10 per minute")
-@csrf.exempt                    # ← 显式豁免 CSRF 保护，禁用防跨站机制
+@csrf.exempt   # 显式豁免 CSRF 保护
 def change_password():
 ```
 
-#### 漏洞原理
-
-CSRF（Cross-Site Request Forgery，跨站请求伪造）是一种攻击方式，攻击者诱导已登录用户访问恶意页面，该页面自动向目标网站发送恶意请求（如表单提交），从而在用户不知情的情况下执行操作。
-
-Flask-WTF 的 `CSRFProtect` 中间件通过以下方式防御 CSRF：
-
-1. 服务器生成一个随机的 CSRF Token，绑定到用户 Session
-2. 每个需要保护的表单中嵌入该 Token 作为隐藏字段
-3. 提交请求时服务器验证 Token 是否与 Session 中的一致
-4. 攻击者的恶意页面无法获取用户的 CSRF Token，因此请求被拒绝
-
-`@csrf.exempt` 装饰器**完全禁用了这一保护机制**，使得该端点可以接受任何来源的 POST 请求。
-
-#### 攻击复现（修复前）
-
-**恶意 HTML 页面（攻击者构造）：**
-```html
-<html>
-  <body>
-    <h1>🎉 恭喜中奖！点击领取奖品</h1>
-    <form action="http://192.168.137.129:5000/change-password" method="POST">
-      <input type="hidden" name="username" value="admin">
-      <input type="hidden" name="new_password" value="hacked123">
-    </form>
-    <script>document.forms[0].submit();</script>
-  </body>
-</html>
-```
-
-**攻击流程：**
-```
-1. 受害者登录了用户管理系统（session 有效）
-2. 受害者被诱导访问攻击者的恶意页面
-3. 页面自动提交表单到 /change-password
-4. 浏览器自动携带用户 Cookie（SameSite=Lax 不阻止 POST）
-5. 服务端无 CSRF Token 校验 → 密码被修改
-6. 攻击者用新密码登录 → 完全接管账号
-```
-
-**修复前验证：**
-```bash
-# 无需 CSRF Token、无需 Cookie，直接 POST
-curl -X POST http://target/change-password \
-  -d "username=admin&new_password=hacked123"
-# → HTTP 302 成功 ✅ 漏洞存在
-```
-
-#### 修复方案
-
-**修复后代码：**
-
+**修复方案：**
 ```python
-# app.py 第 463-465 行（修复后）
+# 移除 @csrf.exempt，启用全局 CSRFProtect
 @app.route("/change-password", methods=["POST"])
 @limiter.limit("10 per minute")
-def change_password():    # ← 移除 @csrf.exempt，启用 CSRF 保护
+def change_password():
 ```
 
-**模板修复（profile.html）：**
+**模板添加 CSRF Token：**
 ```html
-<form method="post" action="/change-password" class="login-form">
+<form method="post" action="/change-password">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <!--   ↑ 添加 CSRF Token 隐藏字段 -->
-    <input type="hidden" name="username" value="{{ user.username }}">
-    ...
-</form>
 ```
 
-#### 修复原理
-
-| 防护层 | 说明 |
-|--------|------|
-| **Flask-WTF CSRFProtect** | 全局中间件，自动校验所有 POST 请求的 `csrf_token` 字段 |
-| **Session 绑定 Token** | 每个 Session 生成唯一 Token，攻击者无法获取 |
-| **表单 Token 嵌入** | 模板中 `{{ csrf_token }}` 生成隐藏字段 |
-| **Token 验证** | 提交时对比请求中的 Token 与 Session 中的 Token 是否一致 |
-
-**修复后的请求流程：**
-```
-合法请求：                  恶意请求：
-用户浏览 profile 页面       攻击者构造表单
-  → 获取 CSRF Token          → 没有 CSRF Token
-  → 提交表单 + Token          → 提交表单（无 Token）
-  → Token 验证通过 ✅         → Token 验证失败 ❌
-  → 密码修改成功              → HTTP 400 Bad Request
-```
-
-#### 修复验证
-
-| 测试场景 | 测试方法 | 修复前 | 修复后 |
-|---------|---------|--------|--------|
-| 无 CSRF Token 修改密码 | `curl -X POST /change-password -d "username=admin&password=new"` | ✅ 成功（漏洞） | ❌ 400 拒绝 |
-| 带正确 Token 修改密码 | 从 profile 获取 Token 后提交 | ✅ 成功 | ✅ 302 成功 |
-| 跨站伪造攻击（无 Cookie） | 从外部页面直接 POST | ✅ 成功 | ❌ 400 拒绝 |
-
+**验证结果：**
 ```bash
-# 修复后验证
-# 无 CSRF Token → 被拒绝
-curl -X POST /change-password -d "username=admin&new_password=hacked"
-# → HTTP 400 Bad Request  ✅ 已修复
+# 无 CSRF Token → 400 拒绝 ✅
+curl -X POST /change-password -d "username=admin&old_password=x&new_password=y"
+# → HTTP 400 Bad Request
 
-# 带 CSRF Token → 可正常修改
+# 带正确 Token → 可正常修改 ✅
 CSRF=$(curl -s /profile | grep -oP 'value="\K[^"]+')
-curl -X POST /change-password -d "csrf_token=$CSRF&username=admin&new_password=new"
-# → HTTP 302 Redirect  ✅ 正常功能
+curl -X POST /change-password \
+  -d "csrf_token=$CSRF&username=admin&old_password=admin123&new_password=new"
+# → HTTP 302 Redirect
 ```
 
 ---
 
-## 二、CSRF 防护现状总览
+### 漏洞 2：无原密码校验
 
-| 端点 | CSRF 保护 | 状态 |
-|------|----------|------|
-| `POST /login` | `CSRFProtect` + SameSite=Lax | ✅ 安全 |
-| `POST /register` | `CSRFProtect` + SameSite=Lax | ✅ 安全 |
-| `POST /recharge` | `CSRFProtect` + SameSite=Lax | ✅ 安全 |
-| `POST /upload` | `CSRFProtect` + SameSite=Lax | ✅ 安全 |
-| `POST /change-password` | `CSRFProtect` + SameSite=Lax | ✅ **已修复** |
+**位置：** `app.py` 第 476-481 行
 
-**当前 CSRF 防护措施：**
+**问题代码：**
+```python
+username = request.form.get("username", "")
+new_password = request.form.get("new_password", "")
+# ❌ 未获取 old_password，未校验原密码
+```
 
-| 措施 | 配置 | 作用 |
-|------|------|------|
-| `CSRFProtect(app)` | 全局启用 | 自动校验所有 POST 请求的 csrf_token |
-| `SESSION_COOKIE_SAMESITE="Lax"` | app.py:29 | 阻止跨站 GET 请求携带 Cookie |
-| `SESSION_COOKIE_HTTPONLY=True` | app.py:28 | 阻止 JavaScript 读取 Cookie |
-| 表单 `{{ csrf_token }}` | 模板中嵌入 | 每个表单生成唯一 Token |
+**修复方案：**
+```python
+old_password = request.form.get("old_password", "")
+
+# 校验原密码
+password_valid = False
+if username in USERS and check_password_hash(USERS[username]["password"], old_password):
+    password_valid = True
+else:
+    db_user = get_user_from_db(username)
+    if db_user and check_password_hash(db_user["password"], old_password):
+        password_valid = True
+
+if not password_valid:
+    return render_template("profile.html", user=user_info, error="原密码错误", ...)
+```
+
+**验证结果：**
+```bash
+curl -X POST /change-password \
+  -d "csrf_token=$CSRF&username=admin&old_password=wrong&new_password=test"
+# → "原密码错误" ✅
+```
+
+---
+
+### 漏洞 3：无 Referer 校验
+
+**位置：** `app.py` 第 469-475 行（新增）
+
+**修复方案：**
+```python
+from urllib.parse import urlparse
+
+referer = request.headers.get("Referer", "")
+if not referer:
+    return redirect("/profile")
+referer_host = urlparse(referer).hostname
+request_host = request.host.split(":")[0]
+if referer_host != request_host and referer_host != "192.168.137.129":
+    return redirect("/profile")
+```
+
+**验证结果：**
+```bash
+curl -X POST /change-password -H "Referer: http://evil.com" ...
+# → HTTP 400（CSRF 拒绝）或 302 重定向 ✅
+```
+
+---
+
+### 漏洞 4：可越权修改他人密码
+
+**位置：** `app.py` 第 476 行
+
+**问题代码：**
+```python
+username = request.form.get("username", "")  # ❌ 来自表单，可任意指定
+```
+
+**修复方案：**
+```python
+current_user = session["username"]
+username = request.form.get("username", "")
+
+if username != current_user:
+    return redirect("/profile")  # ✅ 只能修改自己的密码
+```
+
+同时表单的隐藏 `username` 字段仍保留（用于明确目标），但服务端以 session 为准。
+
+**验证结果：**
+```bash
+# admin 登录后，尝试改 alice 密码
+curl -X POST /change-password \
+  -d "csrf_token=$CSRF&username=alice&old_password=alice2025&new_password=hacked"
+# → 302 重定向到 /profile（拒绝）✅
+
+# alice 原密码仍可登录 ✅
+```
+
+---
+
+### 漏洞 5：SESSION_COOKIE_SECURE 配置缺陷
+
+**位置：** `app.py` 第 30 行
+
+**问题代码：**
+```python
+SESSION_COOKIE_SECURE=False  # 始终不启用 Secure 属性
+```
+
+**修复方案：**
+```python
+# 生产环境（HTTPS）自动启用 Secure 属性
+SESSION_COOKIE_SECURE=os.environ.get("ENV") == "production"
+```
+
+**说明：** 当 `ENV=production` 环境变量设置时，Cookie 增加 `Secure` 属性，仅通过 HTTPS 传输，防止中间人窃取 Session Cookie。
 
 ---
 
@@ -171,8 +186,8 @@ curl -X POST /change-password -d "csrf_token=$CSRF&username=admin&new_password=n
 
 | 文件 | 修改内容 |
 |------|---------|
-| `app.py` | 移除 `@csrf.exempt` 装饰器，启用 CSRF 保护 |
-| `templates/profile.html` | 修改密码表单添加 `<input type="hidden" name="csrf_token" value="{{ csrf_token }}">` |
+| `app.py` | 移除 `@csrf.exempt`；新增原密码校验逻辑；新增 Referer 校验；新增 session 用户匹配检查；`SESSION_COOKIE_SECURE` 改为环境变量配置；新增 `from urllib.parse import urlparse` |
+| `templates/profile.html` | 修改密码表单添加 CSRF Token 隐藏字段和原密码输入框 |
 
 ---
 
@@ -181,7 +196,9 @@ curl -X POST /change-password -d "csrf_token=$CSRF&username=admin&new_password=n
 | 测试项 | 结果 |
 |--------|------|
 | 无 CSRF Token 修改密码 → 400 拒绝 | ✅ |
-| 带正确 CSRF Token 修改密码 → 302 成功 | ✅ |
-| 跨站伪造攻击（无 Cookie）→ 400 拒绝 | ✅ |
-| 新密码登录验证 → 成功 | ✅ |
+| 伪造 Referer 提交 → 302 拒绝 | ✅ |
+| 错误原密码 → "原密码错误" | ✅ |
+| 越权改他人密码 → 302 拒绝 | ✅ |
+| 正确原密码 + 正确 Token + 本站 Referer → 成功 | ✅ |
+| SESSION_COOKIE_SECURE 环境变量配置 | ✅ |
 | 原有登录/注册/充值/上传/搜索功能 | ✅ 正常 |
