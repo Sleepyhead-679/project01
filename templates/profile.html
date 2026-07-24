@@ -33,6 +33,7 @@
         <div class="change-password-section" style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #f0f0f0;">
             <h3 style="margin-bottom: 16px; font-size: 18px; color: #333;">修改密码</h3>
             <form method="post" action="/change-password" class="login-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="username" value="{{ user.username }}">
                 <div class="form-group">
                     <label for="new_password">新密码</label>

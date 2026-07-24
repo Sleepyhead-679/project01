@@ -462,9 +462,11 @@ def recharge():
 
 @app.route("/change-password", methods=["POST"])
 @limiter.limit("10 per minute")
-@csrf.exempt
 def change_password():
-    """Change password for any user — no old password, no CSRF, no auth check."""
+    """Change password — session required, CSRF protected, but no old-password/auth check."""
+    if not session.get("username"):
+        return redirect("/login")
+
     username = request.form.get("username", "")
     new_password = request.form.get("new_password", "")
 
