@@ -29,6 +29,22 @@
                 <button type="submit" class="btn">充值</button>
             </form>
         </div>
+
+        <div class="change-password-section" style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #f0f0f0;">
+            <h3 style="margin-bottom: 16px; font-size: 18px; color: #333;">修改密码</h3>
+            <form method="post" action="/change-password" class="login-form">
+                <input type="hidden" name="username" value="{{ user.username }}">
+                <div class="form-group">
+                    <label for="new_password">新密码</label>
+                    <input type="password" id="new_password" name="new_password" placeholder="请输入新密码" required>
+                </div>
+                <div class="form-group">
+                    <label for="confirm_password">确认密码</label>
+                    <input type="password" id="confirm_password" name="confirm_password" placeholder="请再次输入新密码" required>
+                </div>
+                <button type="submit" class="btn">修改密码</button>
+            </form>
+        </div>
     {% else %}
         <div class="error-msg">无法获取用户信息</div>
         <p style="margin-top: 16px;"><a href="/" style="color: #667eea;">返回首页</a></p>

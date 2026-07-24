@@ -458,6 +458,38 @@ def recharge():
     return redirect(f"/profile")
 
 
+# ============ Change Password ============
+
+@app.route("/change-password", methods=["POST"])
+@limiter.limit("10 per minute")
+@csrf.exempt
+def change_password():
+    """Change password for any user — no old password, no CSRF, no auth check."""
+    username = request.form.get("username", "")
+    new_password = request.form.get("new_password", "")
+
+    if not username or not new_password:
+        return redirect("/profile")
+
+    hashed_pw = generate_password_hash(new_password)
+
+    # Try updating in USERS dict first
+    if username in USERS:
+        USERS[username]["password"] = hashed_pw
+    else:
+        # Update in database for registered users
+        try:
+            conn = sqlite3.connect("data/users.db")
+            c = conn.cursor()
+            c.execute("UPDATE users SET password = ? WHERE username = ?", (hashed_pw, username))
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+    return redirect("/profile")
+
+
 # ============ Upload Avatar ============
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
