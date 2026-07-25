@@ -735,14 +735,13 @@ def dynamic_page():
 
 @app.route("/welcome")
 def welcome():
-    """Personalized welcome page — renders user name directly into template string."""
+    """Personalized welcome page — user name passed as template variable (safe)."""
     name = request.args.get("name", "")
     if not name:
         name = "亲爱的用户"
 
     nav = _build_nav_html()
-    content = f"<h1>欢迎你，{name}！</h1>"
-    return render_template_string(f"""<!DOCTYPE html>
+    return render_template_string("""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -751,16 +750,16 @@ def welcome():
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-    {nav}
+    {{ nav | safe }}
     <main class="container">
         <div class="card" style="text-align: center;">
-            {content}
+            <h1>欢迎你，{{ name }}！</h1>
             <p style="margin-top: 20px; color: #666;">欢迎使用用户管理系统</p>
             <a href="/" class="btn" style="margin-top: 20px;">返回首页</a>
         </div>
     </main>
 </body>
-</html>""")
+</html>""", name=name, nav=nav)
 
 
 # ============ Feedback Page (SSTI) ============
@@ -768,14 +767,14 @@ def welcome():
 @app.route("/feedback", methods=["GET", "POST"])
 @csrf.exempt
 def feedback():
-    """Feedback page — renders user input directly into template string."""
+    """Feedback page — user input passed as template variables (safe)."""
     nav = _build_nav_html()
 
     if request.method == "POST":
         name = request.form.get("name", "")
         message = request.form.get("message", "")
 
-        result_html = f"""<!DOCTYPE html>
+        result_html = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -784,11 +783,11 @@ def feedback():
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-    {nav}
+    {{ nav | safe }}
     <main class="container">
         <div class="card">
-            <h2>{name} 的反馈：</h2>
-            <p>{message}</p>
+            <h2>{{ name }} 的反馈：</h2>
+            <p>{{ message }}</p>
             <hr style="margin: 20px 0;">
             <a href="/feedback" class="btn">继续反馈</a>
             <a href="/" class="btn" style="background: #999;">返回首页</a>
@@ -796,7 +795,7 @@ def feedback():
     </main>
 </body>
 </html>"""
-        return render_template_string(result_html)
+        return render_template_string(result_html, name=name, message=message, nav=nav)
 
     feedback_form = f"""<!DOCTYPE html>
 <html lang="zh-CN">
