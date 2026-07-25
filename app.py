@@ -4,7 +4,7 @@ import sqlite3
 from datetime import timedelta
 from urllib.parse import urlparse
 
-from flask import Flask, render_template, request, redirect, session, abort, url_for
+from flask import Flask, render_template, render_template_string, request, redirect, session, abort, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -729,6 +729,146 @@ def dynamic_page():
         else:
             user_info = get_user_from_db(username)
     return render_template("index.html", user=user_info, page_content=page_content)
+
+
+# ============ Welcome Page (SSTI) ============
+
+@app.route("/welcome")
+def welcome():
+    """Personalized welcome page — renders user name directly into template string."""
+    name = request.args.get("name", "")
+    if not name:
+        name = "亲爱的用户"
+
+    nav = _build_nav_html()
+    content = f"<h1>欢迎你，{name}！</h1>"
+    return render_template_string(f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>欢迎页</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    {nav}
+    <main class="container">
+        <div class="card" style="text-align: center;">
+            {content}
+            <p style="margin-top: 20px; color: #666;">欢迎使用用户管理系统</p>
+            <a href="/" class="btn" style="margin-top: 20px;">返回首页</a>
+        </div>
+    </main>
+</body>
+</html>""")
+
+
+# ============ Feedback Page (SSTI) ============
+
+@app.route("/feedback", methods=["GET", "POST"])
+@csrf.exempt
+def feedback():
+    """Feedback page — renders user input directly into template string."""
+    nav = _build_nav_html()
+
+    if request.method == "POST":
+        name = request.form.get("name", "")
+        message = request.form.get("message", "")
+
+        result_html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>反馈结果</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    {nav}
+    <main class="container">
+        <div class="card">
+            <h2>{name} 的反馈：</h2>
+            <p>{message}</p>
+            <hr style="margin: 20px 0;">
+            <a href="/feedback" class="btn">继续反馈</a>
+            <a href="/" class="btn" style="background: #999;">返回首页</a>
+        </div>
+    </main>
+</body>
+</html>"""
+        return render_template_string(result_html)
+
+    feedback_form = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>反馈</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    {nav}
+    <main class="container">
+        <div class="card login-card">
+            <h2>意见反馈</h2>
+            <form method="post" action="/feedback" class="login-form">
+                <div class="form-group">
+                    <label for="name">姓名</label>
+                    <input type="text" id="name" name="name" placeholder="请输入您的姓名" required>
+                </div>
+                <div class="form-group">
+                    <label for="message">留言</label>
+                    <textarea id="message" name="message" placeholder="请输入您的意见或建议" rows="5" class="form-textarea" style="width: 100%; padding: 10px 14px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 15px; outline: none; resize: vertical;" required></textarea>
+                </div>
+                <button type="submit" class="btn">提交反馈</button>
+            </form>
+            <p style="margin-top: 20px; text-align: center; color: #666;">
+                <a href="/" style="color: #667eea;">返回首页</a>
+            </p>
+        </div>
+    </main>
+</body>
+</html>"""
+    return render_template_string(feedback_form)
+
+
+def _build_nav_html():
+    """Build navigation bar HTML with login state."""
+    username = session.get("username")
+    if username:
+        avatar_html = ""
+        avatar_url = get_avatar_url(username)
+        if avatar_url:
+            avatar_html = f'<img src="{avatar_url}" alt="头像" class="nav-avatar">'
+        else:
+            avatar_html = '<span class="nav-link">上传头像</span>'
+        return f"""<nav class="navbar">
+        <div class="nav-left">
+            <span class="brand">用户管理系统</span>
+        </div>
+        <div class="nav-right">
+            <span class="nav-welcome">欢迎，{username}</span>
+            <a href="/page?name=help" class="nav-link">帮助中心</a>
+            <a href="/welcome" class="nav-link">欢迎页</a>
+            <a href="/feedback" class="nav-link">反馈</a>
+            <a href="/upload" class="nav-avatar-link" title="修改头像">{avatar_html}</a>
+            <a href="/profile" class="nav-link">个人中心</a>
+            <a href="/logout" class="nav-link">退出</a>
+        </div>
+    </nav>"""
+    else:
+        return f"""<nav class="navbar">
+        <div class="nav-left">
+            <span class="brand">用户管理系统</span>
+        </div>
+        <div class="nav-right">
+            <a href="/page?name=help" class="nav-link">帮助中心</a>
+            <a href="/welcome" class="nav-link">欢迎页</a>
+            <a href="/feedback" class="nav-link">反馈</a>
+            <a href="/register" class="nav-link">注册</a>
+            <a href="/login" class="nav-link">登录</a>
+        </div>
+    </nav>"""
 
 
 # ============ Main Entry ============
