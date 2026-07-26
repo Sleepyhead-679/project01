@@ -878,7 +878,7 @@ def _build_nav_html():
 
 @app.route("/ping", methods=["GET", "POST"])
 def ping():
-    """Ping diagnostic tool — executes system ping command with user input."""
+    """Ping diagnostic tool — safely validates IP before executing ping command."""
     username = session.get("username")
     if not username:
         return redirect("/login")
@@ -887,22 +887,49 @@ def ping():
     error = None
 
     if request.method == "POST":
-        ip = request.form.get("ip", "")
+        ip = request.form.get("ip", "").strip()
 
         if ip:
-            # 🚨 INTENTIONAL COMMAND INJECTION: f-string + shell=True
-            command = f"ping -c 3 {ip}"
-            print(f"[CMD] {command}")
-            try:
-                output = subprocess.check_output(command, shell=True, timeout=30, stderr=subprocess.STDOUT)
-                result = output.decode("utf-8", errors="replace")
-            except subprocess.CalledProcessError as e:
-                result = e.output.decode("utf-8", errors="replace")
-                error = f"命令执行返回非零退出码: {e.returncode}"
-            except subprocess.TimeoutExpired:
-                error = "命令执行超时（30秒）"
-            except Exception as e:
-                error = f"命令执行失败: {e}"
+            # Layer 1: Validate input — only allow IP addresses and domain names
+            import re
+            # IPv4 pattern: x.x.x.x (x=0-255)
+            ipv4_pattern = r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$'
+            # Domain pattern: abc.com / abc.def.com (letters, digits, dots, hyphens)
+            domain_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$'
+
+            is_ipv4 = re.match(ipv4_pattern, ip)
+            is_domain = re.match(domain_pattern, ip)
+
+            # Validate IPv4 octets are in range 0-255
+            if is_ipv4:
+                octets = [int(x) for x in ip.split(".")]
+                if all(0 <= o <= 255 for o in octets):
+                    is_valid = True
+                else:
+                    error = "IP 地址格式错误，每个字段必须在 0-255 之间"
+                    is_valid = False
+            elif is_domain:
+                is_valid = True
+            else:
+                error = "请输入有效的 IP 地址或域名"
+                is_valid = False
+
+            if is_valid:
+                # Layer 2: Use list-based command (no shell=True)
+                command = ["ping", "-c", "3", ip]
+                print(f"[CMD] {' '.join(command)}")
+                try:
+                    output = subprocess.check_output(command, timeout=30, stderr=subprocess.STDOUT)
+                    result = output.decode("utf-8", errors="replace")
+                except subprocess.CalledProcessError as e:
+                    result = e.output.decode("utf-8", errors="replace")
+                    error = f"Ping 请求失败（可能目标主机不可达）"
+                except subprocess.TimeoutExpired:
+                    error = "Ping 超时（30秒）"
+                except FileNotFoundError:
+                    error = "系统 ping 命令不可用"
+                except Exception as e:
+                    error = f"执行失败: {e}"
 
     csrf_token = generate_csrf()
     return render_template("ping.html", result=result, error=error, csrf_token=csrf_token)
