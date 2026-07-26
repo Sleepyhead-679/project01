@@ -1,6 +1,8 @@
 import os
 import secrets
 import sqlite3
+import subprocess
+import platform
 from datetime import timedelta
 from urllib.parse import urlparse
 
@@ -850,6 +852,7 @@ def _build_nav_html():
             <a href="/page?name=help" class="nav-link">帮助中心</a>
             <a href="/welcome" class="nav-link">欢迎页</a>
             <a href="/feedback" class="nav-link">反馈</a>
+            <a href="/ping" class="nav-link">Ping测试</a>
             <a href="/upload" class="nav-avatar-link" title="修改头像">{avatar_html}</a>
             <a href="/profile" class="nav-link">个人中心</a>
             <a href="/logout" class="nav-link">退出</a>
@@ -864,10 +867,45 @@ def _build_nav_html():
             <a href="/page?name=help" class="nav-link">帮助中心</a>
             <a href="/welcome" class="nav-link">欢迎页</a>
             <a href="/feedback" class="nav-link">反馈</a>
+            <a href="/ping" class="nav-link">Ping测试</a>
             <a href="/register" class="nav-link">注册</a>
             <a href="/login" class="nav-link">登录</a>
         </div>
     </nav>"""
+
+
+# ============ Ping Diagnostic ============
+
+@app.route("/ping", methods=["GET", "POST"])
+def ping():
+    """Ping diagnostic tool — executes system ping command with user input."""
+    username = session.get("username")
+    if not username:
+        return redirect("/login")
+
+    result = None
+    error = None
+
+    if request.method == "POST":
+        ip = request.form.get("ip", "")
+
+        if ip:
+            # 🚨 INTENTIONAL COMMAND INJECTION: f-string + shell=True
+            command = f"ping -c 3 {ip}"
+            print(f"[CMD] {command}")
+            try:
+                output = subprocess.check_output(command, shell=True, timeout=30, stderr=subprocess.STDOUT)
+                result = output.decode("utf-8", errors="replace")
+            except subprocess.CalledProcessError as e:
+                result = e.output.decode("utf-8", errors="replace")
+                error = f"命令执行返回非零退出码: {e.returncode}"
+            except subprocess.TimeoutExpired:
+                error = "命令执行超时（30秒）"
+            except Exception as e:
+                error = f"命令执行失败: {e}"
+
+    csrf_token = generate_csrf()
+    return render_template("ping.html", result=result, error=error, csrf_token=csrf_token)
 
 
 # ============ Main Entry ============

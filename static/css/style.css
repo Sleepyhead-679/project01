@@ -304,3 +304,34 @@ body {
     border-color: #fff;
     transform: scale(1.1);
 }
+
+/* Ping console output */
+.ping-console {
+    margin-top: 20px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #333;
+}
+
+.ping-header {
+    background: #222;
+    color: #ccc;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: bold;
+    border-bottom: 1px solid #444;
+}
+
+.ping-output {
+    background: #1a1a1a;
+    color: #00ff00;
+    padding: 16px;
+    margin: 0;
+    font-family: "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 400px;
+    overflow-y: auto;
+}
