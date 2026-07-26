@@ -849,11 +849,11 @@ def _build_nav_html():
         </div>
         <div class="nav-right">
             <span class="nav-welcome">欢迎，{username}</span>
+            <a href="/upload" class="nav-avatar-link" title="修改头像">{avatar_html}</a>
             <a href="/page?name=help" class="nav-link">帮助中心</a>
             <a href="/welcome" class="nav-link">欢迎页</a>
             <a href="/feedback" class="nav-link">反馈</a>
             <a href="/ping" class="nav-link">Ping测试</a>
-            <a href="/upload" class="nav-avatar-link" title="修改头像">{avatar_html}</a>
             <a href="/profile" class="nav-link">个人中心</a>
             <a href="/logout" class="nav-link">退出</a>
         </div>
