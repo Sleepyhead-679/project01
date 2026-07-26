@@ -156,51 +156,256 @@ python app.py
 | 🧩 **SSTI 防护** | 模板变量替代 f-string 拼接 + Jinja2 自动转义 | 防服务端模板注入 |
 | 🖥️ **命令注入防护** | IP 白名单正则校验 + 列表传参替代 shell=True | 防命令注入与RCE |
 
-### 文件上传安全策略（5层防御）
+---
 
-| 层级 | 措施 | 对应漏洞 |
-|------|------|---------|
-| 1 | **扩展名白名单** — 仅允许 6 种图片格式 | V-U01, V-U06, V-U09, V-U10 |
-| 2 | **Content-Type 校验** — 拒绝非图片 MIME 声明 | V-U08 |
-| 3 | **魔术字节校验** — 读取文件头 16 字节验证签名 | V-U01, V-U08 |
-| 4 | **文件覆盖保护** — 同名文件禁止覆盖 | V-U07 |
-| 5 | **路径遍历防护** — 清理 `../` 和空字节 | V-U01 增强 |
+## 安全审计与漏洞修复记录
 
-详细审计报告见 [`report/day4_文件上传漏洞报告_王君豪.md`](report/day4_文件上传漏洞报告_王君豪.md)。
+本项目作为教学用途，**故意引入并逐步修复了以下安全漏洞**。每轮修复均有详细的审计报告。
 
-## 文件上传修复记录
+### Day 2 — 密码安全修复
 
-该应用曾存在 12 个文件上传漏洞（**已修复 8 个，按需求保留 4 个**）：
+| 漏洞 | 类型 | 等级 | 修复方式 |
+|------|------|------|---------|
+| 硬编码 Secret Key | 密码安全 | 🔴 高危 | 替换为环境变量 + 随机生成 |
+| 明文密码存储 | 密码安全 | 🔴 高危 | bcrypt/scrypt 哈希存储 |
+| 密码回显到页面 | 信息泄露 | 🟠 中危 | 删除模板中的密码输出 |
+| Flask Debug 模式 | 配置缺陷 | 🟠 中危 | 关闭 debug 模式 |
+| 缺少安全响应头 | 配置缺陷 | 🟠 中危 | 添加 CSP/X-Frame-Options 等 |
+| CSRF 保护缺失 | CSRF | 🟠 中危 | 启用 Flask-WTF CSRFProtect |
+| 缺少速率限制 | 暴力破解 | 🔴 高危 | 添加 Flask-Limiter 10次/分钟 |
+| 缺少 Session 安全配置 | 会话安全 | 🟠 中危 | 添加 HttpOnly/SameSite/8h |
 
-| 漏洞 | 类型 | 严重等级 | 状态 |
-|------|------|---------|------|
-| V-U01 | 任意文件上传 | 🔴 高危 | ✅ 已修复 |
-| V-U02 | 存储型 XSS（HTML） | 🔴 高危 | ⚠️ 保留 |
-| V-U03 | JS + CSP 绕过 | 🔴 高危 | ⚠️ 保留 |
-| V-U04 | SVG XSS | 🔴 高危 | ✅ 已修复 |
-| V-U05 | .htaccess 上传 | 🔴 高危 | ✅ 已修复 |
-| V-U06 | PHP WebShell | 🔴 高危 | ✅ 已修复 |
-| V-U07 | 文件覆盖 | 🟠 中危 | ✅ 已修复 |
-| V-U08 | Content-Type 篡改 | 🟠 中危 | ✅ 已修复 |
-| V-U09 | 无扩展名文件 | 🟠 中危 | ✅ 已修复 |
-| V-U10 | 双扩展名 | 🟠 中危 | ✅ 已修复 |
-| V-U11 | 中文文件名 | 🟢 低危 | ⚠️ 保留 |
-| V-U12 | 目录枚举 | 🟢 低危 | ⚠️ 保留 |
+详细报告：[`report/day2密码漏洞报告.md`](report/day2密码漏洞报告.md)
 
-详细审计报告见 [`report/day4_文件上传漏洞报告_王君豪.md`](report/day4_文件上传漏洞报告_王君豪.md)。
+---
 
-## SQL 注入修复记录
+### Day 3 — SQL 注入修复
 
-该应用曾存在 4 个 SQL 注入点（全部已修复）：
+SQL 注入漏洞是由于使用 f-string 将用户输入直接拼接到 SQL 语句中导致的。攻击者可通过构造特殊字符（如单引号 `'`）改变 SQL 语句结构，执行任意 SQL 命令。
 
 | 注入点 | 位置 | 修复方式 |
 |--------|------|---------|
-| username 字段 | `/register` POST | 参数化查询 |
-| email 字段 | `/register` POST | 参数化查询 |
-| phone 字段 | `/register` POST | 参数化查询 |
-| keyword 参数 | `/search?keyword=` | 参数化查询 |
+| **username 字段** | `/register` POST | 参数化查询 `?` 占位符 |
+| **email 字段** | `/register` POST | 参数化查询 `?` 占位符 |
+| **phone 字段** | `/register` POST | 参数化查询 `?` 占位符 |
+| **keyword 参数** | `/search?keyword=` | 参数化查询 `?` 占位符 |
 
-详细审计报告见 [`report/day3漏洞报告.md`](report/day3漏洞报告.md)。
+**修复前漏洞代码示例：**
+```python
+# ❌ f-string 直接拼接（漏洞）
+sql = f"INSERT INTO users (username, password, email, phone) VALUES ('{username}', '{hashed_pw}', '{email}', '{phone}')"
+c.execute(sql)
+
+# ❌ 搜索功能同样存在
+sql = f"SELECT * FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'"
+```
+
+**修复后安全代码：**
+```python
+# ✅ 参数化查询（安全）
+sql = "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)"
+c.execute(sql, (username, hashed_pw, email, phone))
+
+sql = "SELECT id, username, email, phone FROM users WHERE username LIKE ? OR email LIKE ?"
+c.execute(sql, (f"%{keyword}%", f"%{keyword}%"))
+```
+
+详细报告：[`report/day3漏洞报告.md`](report/day3漏洞报告.md)
+
+---
+
+### Day 4 — 文件上传漏洞修复
+
+头像上传功能存在 12 个安全漏洞（已修复 8 个，按业务需求保留 4 个）。
+
+| 漏洞 | 类型 | 等级 | 修复方式 |
+|------|------|------|---------|
+| 任意文件上传 | 文件上传 | 🔴 高危 | 扩展名白名单 PNG/JPG/GIF/WEBP/BMP |
+| SVG XSS | XSS | 🔴 高危 | 白名单拦截 `.svg` |
+| .htaccess 上传 | 配置篡改 | 🔴 高危 | 隐藏文件检测 |
+| PHP WebShell | RCE | 🔴 高危 | 危险扩展名黑名单（15种） |
+| 文件覆盖 | 业务逻辑 | 🟠 中危 | `os.path.exists()` 检查 |
+| Content-Type 篡改 | 绕过 | 🟠 中危 | MIME 白名单校验 |
+| 无扩展名文件 | 文件上传 | 🟠 中危 | 必须包含扩展名 |
+| 双扩展名绕过 | 文件上传 | 🟠 中危 | 分段检查危险扩展名 |
+| 存储型 XSS（HTML） | XSS | 🔴 高危 | ⚠️ 保留（白名单已缓解） |
+| JS + CSP 绕过 | XSS | 🔴 高危 | ⚠️ 保留（白名单已缓解） |
+| 中文文件名 | 兼容性 | 🟢 低危 | ⚠️ 保留（业务需求） |
+| 目录枚举 | 信息泄露 | 🟢 低危 | ⚠️ 保留（业务需求） |
+
+**5 层文件上传防御架构：**
+```
+Layer 1: 扩展名白名单 + 黑名单分段检查
+Layer 2: Content-Type MIME 白名单校验
+Layer 3: 魔术字节签名校验（文件头 16 字节）
+Layer 4: 文件覆盖保护（os.path.exists）
+Layer 5: 路径遍历防护（secure_filename_original + realpath）
+```
+
+详细报告：[`report/day4_文件上传漏洞报告_王君豪.md`](report/day4_文件上传漏洞报告_王君豪.md)
+
+---
+
+### Day 5 — 越权与业务逻辑漏洞修复
+
+| 漏洞 | 类型 | 等级 | 修复方式 |
+|------|------|------|---------|
+| `/profile` 无登录校验 | IDOR | 🔴 高危 | 添加 session 登录检查 |
+| `/profile` 可查看任意用户 | IDOR | 🔴 高危 | user_id 改从 session 获取 |
+| `/recharge` 越权操作 | IDOR | 🔴 高危 | user_id 从 session 获取 + 登录校验 |
+| 首页余额不一致 | 业务逻辑 | 🔴 高危 | 从 DB 取真实余额覆盖字典值 |
+| 充值金额可为负数 | 业务逻辑 | 🔴 高危 | 添加 `amount <= 0` 校验 |
+| 充值金额无上限 | 业务逻辑 | 🟠 中危 | 上限 100,000 元 |
+| 头像上传重启丢失 | 持久化 | 🟠 中危 | admin/alice 头像写入 DB |
+| SQL 注入 profile/recharge | SQL 注入 | 🔴 高危 | 改为参数化查询 |
+
+详细报告：[`report/day5_越权业务逻辑漏洞报告_王君豪.md`](report/day5_越权业务逻辑漏洞报告_王君豪.md)
+
+---
+
+### Day 6 — 文件包含漏洞修复（LFI）
+
+动态页面 `/page?name=` 路由存在本地文件包含漏洞，攻击者可通过 `../` 路径遍历读取服务器任意文件。
+
+| 漏洞 | 类型 | 等级 | 修复方式 |
+|------|------|------|---------|
+| 基础路径遍历 `../app.py` | LFI | 🔴 高危 | 白名单 + 路径分隔符剥离 + realpath 边界检查 |
+| 绝对路径读取 `/etc/passwd` | LFI | 🔴 高危 | 白名单校验阻止 |
+| URL 编码绕过 `%2e%2e%2f` | LFI | 🔴 高危 | 白名单前置校验 |
+| SSH 私钥/Git/环境变量泄露 | LFI | 🔴 高危 | 路径遍历被阻断 |
+| `\| safe` + 路径遍历 = HTML注入 | XSS | 🟠 中危 | 白名单确保仅可信内容渲染 |
+
+**修复前（漏洞可读取任意文件）：**
+```bash
+curl "http://target/page?name=../app.py"           # ✅ 读取源代码
+curl "http://target/page?name=../../../etc/passwd" # ✅ 读取系统文件
+curl "http://target/page?name=../../../root/.ssh/id_ed25519" # ✅ SSH私钥
+```
+
+**修复后（三层防御）：**
+```python
+# Layer 1: 剥离路径分隔符
+safe_name = name.replace("/", "").replace("\\", "").replace("..", "")
+# Layer 2: 白名单校验
+if name not in ALLOWED_PAGES:  # 仅允许 help/about/faq
+    page_content = "页面不存在"
+# Layer 3: realpath 目录边界检查
+real_path = os.path.realpath(page_path)
+if not real_path.startswith(os.path.realpath(PAGES_DIR)):
+    page_content = "页面不存在"
+```
+
+详细报告：[`report/day6_文件包含漏洞报告_王君豪.md`](report/day6_文件包含漏洞报告_王君豪.md)
+
+---
+
+### Day 7 — CSRF 漏洞修复
+
+`/change-password` 路由存在 5 个故意设计的安全漏洞（全部已修复）。
+
+| 漏洞 | 类型 | 等级 | 修复方式 |
+|------|------|------|---------|
+| 无 CSRF Token (`@csrf.exempt`) | CSRF | 🔴 高危 | 移除 `@csrf.exempt`，启用 CSRFProtect |
+| 无原密码校验 | 身份绕过 | 🔴 高危 | 添加 `check_password_hash()` 验证 |
+| 无 Referer 校验 | CSRF | 🔴 高危 | 新增 `urlparse` 同源检查 |
+| 越权修改他人密码 | IDOR | 🔴 高危 | `session["username"] != username` 检查 |
+| `SESSION_COOKIE_SECURE=False` | 配置 | 🟠 中危 | 改为环境变量控制 |
+
+**修复后的 6 层防御架构：**
+```
+Layer 1: 身份认证 — session 登录检查
+Layer 2: CSRF Token — Flask-WTF CSRFProtect
+Layer 3: Referer 校验 — urlparse 同源检查
+Layer 4: 权限校验 — session.user == username
+Layer 5: 原密码校验 — check_password_hash()
+Layer 6: 密码哈希 — generate_password_hash()
+```
+
+详细报告：[`report/day7_CSRF漏洞报告_王君豪.md`](report/day7_CSRF漏洞报告_王君豪.md)
+
+---
+
+### Day 8 — SSTI 漏洞修复
+
+`/welcome` 和 `/feedback` 路由使用 `render_template_string` 并通过 f-string 拼接用户输入，导致服务端模板注入漏洞。
+
+| 漏洞 | 位置 | 等级 | 修复方式 |
+|------|------|------|---------|
+| `/welcome?name=` 参数 SSTI | `app.py:739-745` | 🔴 高危 | 模板变量 `{{ name }}` 替代 f-string 拼接 |
+| `/feedback` name 字段 SSTI | `app.py:775,790` | 🔴 高危 | 模板变量 `{{ name }}` 传入 |
+| `/feedback` message 字段 SSTI | `app.py:776,791` | 🔴 高危 | 模板变量 `{{ message }}` 传入 |
+
+**修复前（SSTI 可 RCE）：**
+```bash
+curl "http://target/welcome?name={{7*7}}"                              # → 49
+curl "http://target/welcome?name={{config.SECRET_KEY}}"                # → 密钥泄露
+curl "http://target/welcome?name={{os.popen('id').read()}}"           # → uid=0(root)
+```
+
+**修复后：**
+```python
+# ❌ 漏洞代码
+name = request.args.get("name", "")
+render_template_string(f"<h1>欢迎你，{name}！</h1>")  # f-string 拼接
+
+# ✅ 安全代码
+name = request.args.get("name", "")
+render_template_string("<h1>欢迎你，{{ name }}！</h1>", name=name)  # 模板变量
+```
+
+详细报告：[`report/day8_SSTI漏洞报告_王君豪.md`](report/day8_SSTI漏洞报告_王君豪.md)
+
+---
+
+### Day 9 — 命令注入漏洞修复
+
+`/ping` 路由使用 `f"ping -c 3 {ip}"` + `shell=True` 执行系统命令，攻击者可通过 `;`、`|`、`` ` `` 注入任意命令。
+
+| 漏洞 | 类型 | 等级 | 修复方式 |
+|------|------|------|---------|
+| 分号注入 `;id` | 命令注入 | 🔴 高危 | IP 正则校验 + `shell=True` → `shell=False` |
+| 管道注入 `\|whoami` | 命令注入 | 🔴 高危 | 列表传参替代字符串拼接 |
+| 反引号注入 `` `id` `` | 命令注入 | 🔴 高危 | 不经过 shell 解析 |
+| 敏感文件读取 | 命令注入 | 🔴 高危 | 输入白名单校验 |
+
+**修复前（3 种注入均成功）：**
+```bash
+curl -X POST /ping --data-urlencode "ip=127.0.0.1;id"       # → uid=0(root)
+curl -X POST /ping --data-urlencode "ip=127.0.0.1|whoami"   # → root
+curl -X POST /ping --data-urlencode "ip=127.0.0.1`hostname`" # → kali
+```
+
+**修复后：**
+```python
+# ❌ 漏洞代码
+command = f"ping -c 3 {ip}"
+output = subprocess.check_output(command, shell=True, ...)
+
+# ✅ 安全代码（双层防御）
+# 防御1: IP 正则 + 0-255 范围校验
+is_valid = re.match(r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$', ip)
+# 防御2: 列表传参，不经过 shell
+command = ["ping", "-c", "3", ip]
+output = subprocess.check_output(command, timeout=30, stderr=subprocess.STDOUT)
+```
+
+详细报告：[`report/day9_命令执行漏洞报告_王君豪.md`](report/day9_命令执行漏洞报告_王君豪.md)
+
+---
+
+### 漏洞修复统计
+
+| 安全审计轮次 | 修复数量 | 高危 | 中危 | 低危 |
+|-------------|---------|------|------|------|
+| Day 2 — 密码安全 | 8 | 3 | 5 | 0 |
+| Day 3 — SQL 注入 | 4 | 4 | 0 | 0 |
+| Day 4 — 文件上传 | 8 | 5 | 4 | 3 |
+| Day 5 — 越权与业务逻辑 | 10 | 6 | 4 | 0 |
+| Day 6 — 文件包含 LFI | 5 | 4 | 1 | 0 |
+| Day 7 — CSRF | 5 | 4 | 1 | 0 |
+| Day 8 — SSTI | 3 | 3 | 0 | 0 |
+| Day 9 — 命令注入 | 1 | 1 | 0 | 0 |
+| **合计** | **44** | **30** | **15** | **3** |
 
 ## 技术要点
 
